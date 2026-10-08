@@ -1,26 +1,195 @@
 @import "tailwindcss";
 
+/* Class-based dark mode (toggled on <html> by the theme script). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokyo Night Day (light theme) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --base: #e1e2e7;
+  --mantle: #d5d6db;
+  --editor: #edeef4;
+  --fg: #343b58;
+  --muted: #848cb5;
+  --line: #c4c8da;
+  --blue: #2e7de9;
+  --cyan: #007197;
+  --green: #587539;
+  --orange: #b15c00;
+  --red: #f52a65;
+  --purple: #9854f1;
+  --selection: #b7c1e3;
+}
+
+/* Tokyo Night (dark theme, the default look) */
+.dark {
+  --base: #1a1b26;
+  --mantle: #16161e;
+  --editor: #1f2335;
+  --fg: #c0caf5;
+  --muted: #565f89;
+  --line: #292e42;
+  --blue: #7aa2f7;
+  --cyan: #7dcfff;
+  --green: #9ece6a;
+  --orange: #ff9e64;
+  --red: #f7768e;
+  --purple: #bb9af7;
+  --selection: #283457;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-base: var(--base);
+  --color-mantle: var(--mantle);
+  --color-editor: var(--editor);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-blue: var(--blue);
+  --color-cyan: var(--cyan);
+  --color-green: var(--green);
+  --color-orange: var(--orange);
+  --color-red: var(--red);
+  --color-purple: var(--purple);
+  --font-mono: var(--font-jbmono), ui-monospace, "SF Mono", Menlo, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--base);
+  color: var(--fg);
+  line-height: 1.6;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* blinking block cursor */
+.cursor-blink {
+  animation: cursor-blink 1.06s steps(1) infinite;
+}
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* ghost: wild four-direction wander + three-frame blink, no JS */
+.ghost-float {
+  animation: ghost-float 7s ease-in-out infinite;
+}
+@keyframes ghost-float {
+  0% {
+    transform: translate(0, 0);
+  }
+  20% {
+    transform: translate(-5px, -6px);
+  }
+  40% {
+    transform: translate(4px, -3px);
+  }
+  60% {
+    transform: translate(6px, 5px);
+  }
+  80% {
+    transform: translate(-4px, 4px);
+  }
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+/* blink sequence: open → half → closed → half → open, once per 5s */
+.ghost-half {
+  opacity: 0;
+  animation: ghost-half 5s steps(1, end) infinite;
+}
+@keyframes ghost-half {
+  0%,
+  85% {
+    opacity: 0;
+  }
+  86%,
+  88% {
+    opacity: 1;
+  }
+  89%,
+  93% {
+    opacity: 0;
+  }
+  94%,
+  96% {
+    opacity: 1;
+  }
+  97%,
+  100% {
+    opacity: 0;
+  }
+}
+.ghost-closed {
+  opacity: 0;
+  animation: ghost-closed 5s steps(1, end) infinite;
+}
+@keyframes ghost-closed {
+  0%,
+  89% {
+    opacity: 0;
+  }
+  90%,
+  92% {
+    opacity: 1;
+  }
+  93%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* dashboard ambient bars */
+.dash-bar {
+  transform: scaleX(var(--max, 0.8));
+  transform-origin: left;
+  animation: dash-bar 4s ease-in-out infinite alternate;
+}
+@keyframes dash-bar {
+  from {
+    transform: scaleX(var(--min, 0.3));
+  }
+  to {
+    transform: scaleX(var(--max, 0.8));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cursor-blink,
+  .ghost-float,
+  .ghost-half,
+  .ghost-closed,
+  .dash-bar {
+    animation: none;
+  }
+}
+
+/* thin themed scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }
