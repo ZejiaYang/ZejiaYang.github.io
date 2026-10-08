@@ -12,6 +12,11 @@
 
 # testing
 /coverage
+/playwright-report/
+/test-results/
+
+# private source material
+/cv.md
 
 # next.js
 /.next/

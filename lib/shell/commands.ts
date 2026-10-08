@@ -1,8 +1,5 @@
-// The command registry. Pure functions over the fake FS: the
-// terminal UI interprets the results (printing, cd, opening the
-// editor, opening URLs, switching themes).
-
 import { site } from "@/lib/site";
+import type { MeterSnapshot } from "@/lib/telemetry";
 import {
   resolve,
   displayPath,
@@ -25,6 +22,7 @@ import {
 } from "./lines";
 
 export type EditorTarget = { path: string[]; file: FsFile };
+export type FileRead = EditorTarget & { mode: "cat" | "vim" };
 
 export type CmdResult = {
   out?: OutLine[];
@@ -32,6 +30,7 @@ export type CmdResult = {
   cwd?: string[];
   clear?: boolean;
   editor?: EditorTarget;
+  read?: FileRead;
   openUrl?: string;
   theme?: "dark" | "light" | "toggle";
 };
@@ -41,103 +40,110 @@ export type CmdContext = {
   prevCwd: string[] | null;
   root: FsDir;
   history: string[];
+  meters?: MeterSnapshot;
 };
 
-export const COMMAND_NAMES = [
-  "whoami", "ls", "cd", "pwd", "cat", "vim", "open", "clear",
-  "help", "theme", "echo", "history", "fastfetch", "exit",
-  "skills", "mood", "cal", "date", "fortune", "htop",
-];
+export type Shortcut = {
+  id: string;
+  command: string;
+  description: string;
+  quick?: boolean;
+};
 
-const err = (t: string): CmdResult => ({ out: [errorText(t)] });
+type Command = {
+  name: string;
+  aliases?: string[];
+  usage: string;
+  description: string;
+  examples?: Shortcut[];
+  hidden?: boolean;
+  run: (args: string[], ctx: CmdContext) => CmdResult;
+};
 
-// ── individual commands ────────────────────────────────────────
+const err = (message: string): CmdResult => ({ out: [errorText(message)] });
 
-function cmdWhoami(): CmdResult {
+function cmdLs(args: string[], ctx: CmdContext): CmdResult {
+  const flags = args.filter((arg) => arg.startsWith("-")).join("");
+  const target = args.find((arg) => !arg.startsWith("-"));
+  const hit = resolve(ctx.root, ctx.cwd, target);
+  if (!hit) return err(`ls: no such file or directory: ${target}`);
+  const { node, path } = hit;
+  if (node.type === "file") return { out: [out(entrySpan(node, path))] };
+  const children = node.children.filter(
+    (child) => flags.includes("a") || !(child.type === "file" && child.hidden),
+  );
+  if (!children.length)
+    return { out: [text(node.emptyNote ?? "(nothing here yet)", "muted")] };
+  if (flags.includes("l")) {
+    return {
+      out: children.map((child) =>
+        out(
+          {
+            text: child.type === "dir" ? "drwxr-xr-x" : "-rw-r--r--",
+            tone: "muted",
+          },
+          { text: `  ${String(sizeOf(child)).padStart(5)}  `, tone: "muted" },
+          entrySpan(child, [...path, child.name]),
+        ),
+      ),
+    };
+  }
+  const width =
+    Math.max(...children.map((child) => displayName(child).length)) + 2;
   return {
-    out: [text(site.name.toLowerCase().split(" ")[0])],
+    out: [
+      out(
+        ...children.map((child, index) => {
+          const span = entrySpan(child, [...path, child.name]);
+          return {
+            ...span,
+            text:
+              index === children.length - 1
+                ? span.text
+                : span.text.padEnd(width),
+          };
+        }),
+      ),
+    ],
   };
 }
 
-function cmdLs(args: string[], ctx: CmdContext): CmdResult {
-  const flags = args.filter((a) => a.startsWith("-")).join("");
-  const long = flags.includes("l");
-  const all = flags.includes("a");
-  const target = args.find((a) => !a.startsWith("-"));
-
-  const hit = resolve(ctx.root, ctx.cwd, target);
-  if (!hit) {
-    return err(`ls: no such file or directory: ${target}`);
-  }
-  const { node, path } = hit;
-
-  // ls on a file just prints the file.
-  if (node.type === "file") {
-    return { out: [out(entrySpan(node, path))] };
-  }
-
-  let children = node.children;
-  if (!all) children = children.filter((c) => !(c.type === "file" && c.hidden));
-  if (children.length === 0) {
-    return { out: [text(node.emptyNote ?? "(nothing here yet)", "muted")] };
-  }
-
-  if (long) {
-    return {
-      out: children.map((child) => {
-        const isDir = child.type === "dir";
-        const spans: Span[] = [
-          { text: isDir ? "drwxr-xr-x" : "-rw-r--r--", tone: "muted" },
-          {
-            text: `  ${String(sizeOf(child)).padStart(5)}  `,
-            tone: "muted",
-          },
-          entrySpan(child, [...path, child.name]),
-        ];
-        return out(...spans);
-      }),
-    };
-  }
-
-  // Columnized-ish: names padded to the longest, wrapping naturally.
-  const visible = children;
-  const width = Math.max(...visible.map((c) => displayName(c).length)) + 2;
-  const spans: Span[] = [];
-  visible.forEach((child, i) => {
-    const span = entrySpan(child, [...path, child.name]);
-    span.text = span.text.padEnd(i === visible.length - 1 ? 0 : width);
-    spans.push(span);
-  });
-  return { out: [out(...spans)] };
-}
-
 function displayName(node: FsNode): string {
-  return node.type === "dir" ? `${node.name}/` : node.name;
+  return node.name + (node.type === "dir" ? "/" : "");
 }
 
 function entrySpan(node: FsNode, path: string[]): Span {
-  const isDir = node.type === "dir";
-  const homeRelative =
-    path[0] === "home" ? "~/" + path.slice(1).join("/") : displayPath(path);
+  const target =
+    path[0] === "home" ? `~/${path.slice(1).join("/")}` : displayPath(path);
   return {
     text: displayName(node),
-    tone: isDir ? "blue" : "fg",
-    bold: isDir,
-    cmd: isDir ? `cd ${quote(homeRelative)}` : `vim ${quote(homeRelative)}`,
+    tone: node.type === "dir" ? "blue" : "fg",
+    bold: node.type === "dir",
+    cmd: `${node.type === "dir" ? "cd" : "vim"} ${quote(target)}`,
+    href: node.type === "file" ? node.canonicalUrl : undefined,
   };
 }
 
 function sizeOf(node: FsNode): number {
   if (node.type === "dir") return 96 + node.children.length * 32;
-  return node.edLines.reduce((n, l) => n + l.spans.reduce((m, s) => m + s.text.length, 0), 0);
+  return (
+    node.size ??
+    node.edLines?.reduce(
+      (sum, line) =>
+        sum + line.spans.reduce((n, span) => n + span.text.length, 0),
+      0,
+    ) ??
+    0
+  );
 }
 
 function cmdCd(args: string[], ctx: CmdContext): CmdResult {
   const target = args[0];
   if (!target || target === "~") return { cwd: [...HOME] };
   if (target === "-") {
-    if (!ctx.prevCwd) return err("cd: OLDPWD not set");
-    return { cwd: ctx.prevCwd, out: [text(displayPath(ctx.prevCwd), "muted")] };
+    return ctx.prevCwd
+      ? { cwd: ctx.prevCwd, out: [text(displayPath(ctx.prevCwd), "muted")] }
+      : err("cd: OLDPWD not set");
   }
   const hit = resolve(ctx.root, ctx.cwd, target);
   if (!hit) return err(`cd: no such file or directory: ${target}`);
@@ -145,57 +151,35 @@ function cmdCd(args: string[], ctx: CmdContext): CmdResult {
   return { cwd: hit.path };
 }
 
-function cmdPwd(ctx: CmdContext): CmdResult {
-  return { out: [text(displayPath(ctx.cwd))] };
-}
-
-type ResolvedFile =
-  | { ok: true; file: FsFile; path: string[] }
-  | { ok: false; error: CmdResult };
-
-function resolveFile(args: string[], ctx: CmdContext, cmd: string): ResolvedFile {
-  const target = args.find((a) => !a.startsWith("-"));
-  if (!target) return { ok: false, error: err(`${cmd}: missing file operand`) };
+function readFile(
+  args: string[],
+  ctx: CmdContext,
+  mode: "cat" | "vim",
+): CmdResult {
+  const target = args[0];
+  if (!target) return err(`${mode}: missing file operand`);
   const hit = resolve(ctx.root, ctx.cwd, target);
-  if (!hit) {
-    return { ok: false, error: err(`${cmd}: no such file or directory: ${target}`) };
-  }
-  if (hit.node.type !== "file") {
-    return { ok: false, error: err(`${cmd}: ${target}: is a directory`) };
-  }
-  return { ok: true, file: hit.node, path: hit.path };
-}
-
-function cmdCat(args: string[], ctx: CmdContext): CmdResult {
-  const hit = resolveFile(args, ctx, "cat");
-  if (!hit.ok) return hit.error;
-  return { out: hit.file.edLines };
-}
-
-function cmdVim(args: string[], ctx: CmdContext): CmdResult {
-  if (args.length === 0) {
-    return {
-      out: [text("vim: no file given. nice try, you can't get trapped here", "orange")],
-    };
-  }
-  const hit = resolveFile(args, ctx, "vim");
-  if (!hit.ok) return hit.error;
-  return { editor: { path: hit.path, file: hit.file } };
+  if (!hit) return err(`${mode}: no such file or directory: ${target}`);
+  if (hit.node.type !== "file")
+    return err(`${mode}: ${target}: is a directory`);
+  if (!hit.node.edLines)
+    return { read: { path: hit.path, file: hit.node, mode } };
+  return mode === "cat"
+    ? { out: hit.node.edLines }
+    : { editor: { path: hit.path, file: hit.node } };
 }
 
 function cmdOpen(args: string[], ctx: CmdContext): CmdResult {
   const target = args[0];
-  if (!target) return err("open: missing operand (a project file, e.g. project-alpha.md)");
-  // Accept a bare slug too: "open project-alpha".
-  const withExt = target.endsWith(".md") ? target : `${target}.md`;
+  if (!target)
+    return err("open: missing operand (try open ~/project/geospatial-mae.md)");
   const hit =
-    resolve(ctx.root, ctx.cwd, target) ?? resolve(ctx.root, ctx.cwd, withExt);
-  if (!hit || hit.node.type !== "file") {
+    resolve(ctx.root, ctx.cwd, target) ??
+    resolve(ctx.root, ctx.cwd, `${target}.md`);
+  if (!hit || hit.node.type !== "file")
     return err(`open: no such file: ${target}`);
-  }
-  if (!hit.node.openHref) {
+  if (!hit.node.openHref)
     return err(`open: ${target} has no link associated with it`);
-  }
   return {
     openUrl: hit.node.openHref,
     out: [text(`opening ${hit.node.openHref} …`, "muted")],
@@ -203,167 +187,359 @@ function cmdOpen(args: string[], ctx: CmdContext): CmdResult {
 }
 
 function cmdTheme(args: string[]): CmdResult {
-  const arg = args[0];
-  if (arg === "dark" || arg === "light") {
-    return { theme: arg, out: [text(`theme set to ${arg}`, "muted")] };
+  if (!args.length) return { theme: "toggle" };
+  if (args[0] === "dark" || args[0] === "light") {
+    return { theme: args[0], out: [text(`theme set to ${args[0]}`, "muted")] };
   }
-  if (!arg) return { theme: "toggle" };
-  return err(`theme: unknown theme: ${arg} (try "theme dark" or "theme light")`);
+  return err(
+    `theme: unknown theme: ${args[0]} (try "theme dark" or "theme light")`,
+  );
+}
+
+function meterLines(
+  meters: { label: string; max: number }[],
+  tones: Tone | Partial<Record<string, Tone>>,
+  snapshot?: Record<string, number>,
+): OutLine[] {
+  const width = Math.max(0, ...meters.map((meter) => meter.label.length));
+  return meters.map((meter) => {
+    const pct = Math.max(
+      0,
+      Math.min(100, Math.round(snapshot?.[meter.label] ?? meter.max * 100)),
+    );
+    const filled = Math.round(pct / 10);
+    return out(
+      { text: meter.label.padEnd(width + 2) },
+      {
+        text: "█".repeat(filled),
+        tone:
+          typeof tones === "string" ? tones : (tones[meter.label] ?? "blue"),
+      },
+      { text: "░".repeat(10 - filled), tone: "muted" },
+      { text: ` ${pct}%`, tone: "muted" },
+    );
+  });
 }
 
 function cmdHelp(): CmdResult {
-  const rows: [string, string][] = [
-    ["ls ./project", "things i've built"],
-    ["ls ./blog", "writing"],
-    ["ls ./random", "things i'm into"],
-    ["cat <file>", "print a file right here"],
-    ["vim <file>", "open a file in the editor (q to quit)"],
-    ["open <file>", "open a project's link in a new tab"],
-    ["cd <dir>", "move around (cd ~, cd .., cd -)"],
-    ["pwd / whoami", "the classics"],
-    ["theme [dark|light]", "switch palette"],
-    ["skills · mood", "meters, technical and emotional"],
-    ["cal · date · fortune", "the month, the moment, a thought"],
-    ["clear", "wipe the scrollback (or ctrl+l)"],
-    ["fastfetch", "obligatory"],
-  ];
-  const width = Math.max(...rows.map(([c]) => c.length)) + 2;
+  const visible = COMMANDS.filter((command) => !command.hidden);
+  const width = Math.max(...visible.map((command) => command.usage.length)) + 2;
   return {
     out: [
       text("available commands:", "muted"),
-      ...rows.map(([cmd, desc]) =>
+      ...visible.flatMap((command) => [
         out(
-          { text: "  " + cmd.padEnd(width), tone: "cyan", cmd },
-          { text: `# ${desc}`, tone: "green" },
+          { text: `  ${command.usage.padEnd(width)}`, tone: "cyan" },
+          { text: `# ${command.description}`, tone: "green" },
         ),
-      ),
+        ...(command.examples ?? []).map((example) =>
+          out(
+            { text: "    try: ", tone: "muted" },
+            { text: example.command, tone: "cyan", cmd: example.command },
+          ),
+        ),
+      ]),
       blank(),
-      text("tip: most paths and commands in the output are clickable", "muted"),
+      text("click an example to run it. Shift+Tab leaves the prompt.", "muted"),
     ],
   };
 }
 
-function cmdFastfetch(): CmdResult {
-  // Rendered by the Fastfetch component as a real layout (see
-  // components/terminal/fastfetch.tsx), not padded text.
-  return { block: "fastfetch" };
-}
-
-function cmdSkills(): CmdResult {
-  const width = Math.max(...site.skills.map((s) => s.label.length));
-  return {
-    out: site.skills.map((skill) => {
-      const pct = Math.round(skill.max * 100);
-      const filled = Math.round(pct / 10);
-      return out(
-        { text: skill.label.padEnd(width + 2) },
-        { text: "█".repeat(filled), tone: "green" },
-        { text: "░".repeat(10 - filled), tone: "muted" },
-        { text: ` ${pct}%`, tone: "muted" },
-      );
+const COMMANDS: Command[] = [
+  {
+    name: "ls",
+    aliases: ["ll"],
+    usage: "ls [path] [-la]",
+    description: "list files and folders",
+    examples: [
+      {
+        id: "projects",
+        command: "ls ~/project",
+        description: "projects and papers",
+        quick: true,
+      },
+      {
+        id: "blog",
+        command: "ls ~/blog",
+        description: "reading notes",
+        quick: true,
+      },
+      {
+        id: "random",
+        command: "ls ~/random",
+        description: "other things",
+        quick: true,
+      },
+    ],
+    run: cmdLs,
+  },
+  {
+    name: "cd",
+    usage: "cd [dir]",
+    description: "move around; ~, .. and - work",
+    examples: [{ id: "home", command: "cd ~", description: "back home" }],
+    run: cmdCd,
+  },
+  {
+    name: "pwd",
+    usage: "pwd",
+    description: "where you are",
+    run: (_, ctx) => ({ out: [text(displayPath(ctx.cwd))] }),
+  },
+  {
+    name: "whoami",
+    usage: "whoami",
+    description: "the classic",
+    run: () => ({ out: [text(site.name.toLowerCase().split(" ")[0])] }),
+  },
+  {
+    name: "cat",
+    usage: "cat <file>",
+    description: "print a file",
+    examples: [
+      { id: "now", command: "cat ~/now.txt", description: "what i'm up to" },
+      { id: "elsewhere", command: "cat ~/elsewhere.txt", description: "links" },
+    ],
+    run: (args, ctx) => readFile(args, ctx, "cat"),
+  },
+  {
+    name: "vim",
+    aliases: ["vi", "nvim"],
+    usage: "vim <file>",
+    description: "read a file; q quits",
+    examples: [
+      {
+        id: "about",
+        command: "vim ~/about.txt",
+        description: "about me",
+        quick: true,
+      },
+    ],
+    run: (args, ctx) => readFile(args, ctx, "vim"),
+  },
+  {
+    name: "open",
+    usage: "open <file>",
+    description: "open its primary link in a new tab",
+    examples: [
+      {
+        id: "source",
+        command: "open ~/project/geospatial-mae.md",
+        description: "project source",
+      },
+    ],
+    run: cmdOpen,
+  },
+  {
+    name: "help",
+    usage: "help",
+    description: "this list",
+    examples: [
+      {
+        id: "help",
+        command: "help",
+        description: "more commands",
+        quick: true,
+      },
+    ],
+    run: cmdHelp,
+  },
+  {
+    name: "theme",
+    usage: "theme [dark|light]",
+    description: "toggle or choose a theme",
+    examples: [{ id: "theme", command: "theme", description: "toggle theme" }],
+    run: cmdTheme,
+  },
+  {
+    name: "skills",
+    usage: "skills [--usage]",
+    description: "CV skills, or --usage for a live battery snapshot",
+    examples: [
+      {
+        id: "skills",
+        command: "skills --usage",
+        description: "language batteries",
+      },
+    ],
+    run: (args, ctx) => {
+      if (!args.length)
+        return {
+          out: site.skillInventory.flatMap((group) => [
+            out({ text: `${group.label}:`, tone: "blue", bold: true }),
+            text(group.items.join(", ")),
+            blank(),
+          ]),
+        };
+      if (args.length !== 1 || args[0] !== "--usage")
+        return err("skills: try skills or skills --usage");
+      return { out: meterLines(site.skills, "green", ctx.meters?.skills) };
+    },
+  },
+  {
+    name: "mood",
+    usage: "mood",
+    description: "emotional telemetry",
+    examples: [
+      { id: "mood", command: "mood", description: "emotional telemetry" },
+    ],
+    run: (_, ctx) => ({
+      out: meterLines(
+        site.mood,
+        { energy: "blue", caffeine: "orange", vibe: "purple" },
+        ctx.meters?.mood,
+      ),
     }),
-  };
-}
-
-const MOOD_TONES: Tone[] = ["blue", "orange", "purple"];
-
-function cmdMood(): CmdResult {
-  const width = Math.max(...site.mood.map((m) => m.label.length));
-  return {
-    out: site.mood.map((meter, i) => {
-      const pct = Math.round(meter.max * 100);
-      const filled = Math.round(pct / 10);
-      return out(
-        { text: meter.label.padEnd(width + 2) },
-        { text: "█".repeat(filled), tone: MOOD_TONES[i % MOOD_TONES.length] },
-        { text: "░".repeat(10 - filled), tone: "muted" },
-        { text: ` ${pct}%`, tone: "muted" },
-      );
+  },
+  {
+    name: "date",
+    usage: "date",
+    description: "the moment",
+    examples: [{ id: "date", command: "date", description: "the moment" }],
+    run: () => ({ out: [text(new Date().toLocaleString("en-GB"))] }),
+  },
+  {
+    name: "fortune",
+    usage: "fortune",
+    description: "a thought for today",
+    examples: [
+      { id: "fortune", command: "fortune", description: "a thought for today" },
+    ],
+    run: () => ({
+      out: [
+        text(
+          site.fortunes.length
+            ? `"${site.fortunes[dayOfYear(new Date()) % site.fortunes.length]}"`
+            : "no fortune today",
+        ),
+      ],
     }),
-  };
+  },
+  {
+    name: "cal",
+    usage: "cal",
+    description: "this month",
+    run: () => ({ out: calendarLines(new Date()) }),
+  },
+  {
+    name: "clear",
+    usage: "clear",
+    description: "clear output and command history; Ctrl+L also works",
+    run: () => ({ clear: true }),
+  },
+  {
+    name: "history",
+    usage: "history",
+    description: "commands from this session",
+    run: (_, ctx) => ({
+      out: ctx.history.map((command, index) =>
+        out(
+          { text: `${String(index + 1).padStart(4)}  `, tone: "muted" },
+          { text: command },
+        ),
+      ),
+    }),
+  },
+  {
+    name: "echo",
+    usage: "echo [text]",
+    description: "repeat after you",
+    run: (args) => ({ out: [text(args.join(" "))] }),
+  },
+  {
+    name: "fastfetch",
+    aliases: ["neofetch"],
+    usage: "fastfetch",
+    description: "obligatory",
+    examples: [
+      { id: "fastfetch", command: "fastfetch", description: "site facts" },
+    ],
+    run: () => ({ block: "fastfetch" }),
+  },
+  {
+    name: "htop",
+    usage: "htop",
+    description: "not quite",
+    hidden: true,
+    run: () => ({
+      out: [
+        text(
+          "htop: too heavy for this shell, watch the dashboard pane →",
+          "orange",
+        ),
+      ],
+    }),
+  },
+  {
+    name: "sudo",
+    usage: "sudo",
+    description: "nope",
+    hidden: true,
+    run: () =>
+      err(
+        `${site.shell.user} is not in the sudoers file. this incident will be reported.`,
+      ),
+  },
+  {
+    name: "rm",
+    usage: "rm",
+    description: "read-only",
+    hidden: true,
+    run: () => err("rm: refusing. everything here is read-only."),
+  },
+  {
+    name: "emacs",
+    aliases: ["nano"],
+    usage: "emacs",
+    description: "wrong house",
+    hidden: true,
+    run: () => ({
+      out: [text("command not found (this is a vim household)", "orange")],
+    }),
+  },
+  {
+    name: "exit",
+    aliases: ["logout"],
+    usage: "exit",
+    description: "there is no escape",
+    run: () => ({
+      out: [text("there is no escape. (this is a website.)", "orange")],
+    }),
+  },
+];
+
+export const COMMAND_NAMES = COMMANDS.filter(
+  (command) => !command.hidden,
+).flatMap((command) => [command.name, ...(command.aliases ?? [])]);
+
+export function getQuickCommands(): Shortcut[] {
+  return COMMANDS.flatMap((command) => command.examples ?? []).filter(
+    (example) => example.quick,
+  );
 }
 
-function cmdCal(): CmdResult {
-  return { out: calendarLines(new Date()) };
+export function getShortcut(id: string): Shortcut {
+  const example = COMMANDS.flatMap((command) => command.examples ?? []).find(
+    (shortcut) => shortcut.id === id,
+  );
+  if (!example) throw new Error(`Unknown command shortcut: ${id}`);
+  return example;
 }
-
-function cmdDate(): CmdResult {
-  const now = new Date();
-  const day = now.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-  return { out: [text(`${day}  ${now.toTimeString().slice(0, 8)}`)] };
-}
-
-function cmdFortune(): CmdResult {
-  const fortune =
-    site.fortunes[dayOfYear(new Date()) % site.fortunes.length];
-  return { out: [text(`"${fortune}"`)] };
-}
-
-// ── dispatch ───────────────────────────────────────────────────
 
 export function runCommand(raw: string, ctx: CmdContext): CmdResult {
-  const tokens = tokenize(raw);
-  if (tokens.length === 0) return {};
-  const [cmd, ...args] = tokens;
-
-  switch (cmd) {
-    case "whoami": return cmdWhoami();
-    case "ls": return cmdLs(args, ctx);
-    case "ll": return cmdLs(["-l", ...args], ctx);
-    case "cd": return cmdCd(args, ctx);
-    case "pwd": return cmdPwd(ctx);
-    case "cat": return cmdCat(args, ctx);
-    case "vim":
-    case "vi":
-    case "nvim": return cmdVim(args, ctx);
-    case "open": return cmdOpen(args, ctx);
-    case "clear": return { clear: true };
-    case "help": return cmdHelp();
-    case "theme": return cmdTheme(args);
-    case "echo": return { out: [text(args.join(" "))] };
-    case "history":
-      return {
-        out: ctx.history.map((h, i) =>
-          out({ text: `  ${String(i + 1).padStart(4)}  `, tone: "muted" }, { text: h }),
-        ),
-      };
-    case "fastfetch": return cmdFastfetch();
-    case "neofetch":
-      return {
-        out: [text("note: neofetch is unmaintained, so here's fastfetch instead", "muted")],
-        block: "fastfetch",
-      };
-    case "skills": return cmdSkills();
-    case "mood": return cmdMood();
-    case "cal": return cmdCal();
-    case "date": return cmdDate();
-    case "fortune": return cmdFortune();
-    case "htop":
-      return { out: [text("htop: too heavy for this shell, watch the dashboard pane →", "orange")] };
-    case "sudo":
-      return err(`${site.shell.user} is not in the sudoers file. this incident will be reported.`);
-    case "rm":
-      return err("rm: refusing. everything here is read-only.");
-    case "emacs":
-      return { out: [text("emacs: command not found (this is a vim household)", "orange")] };
-    case "nano":
-      return { out: [text("nano: command not found (this is a vim household)", "orange")] };
-    case "exit":
-    case "logout":
-      return { out: [text("there is no escape. (this is a website.)", "orange")] };
-    default:
-      return {
-        out: [
-          errorText(`zsh: command not found: ${cmd}`),
-          text("type `help` to see what's available", "muted"),
-        ],
-      };
-  }
+  const [name, ...args] = tokenize(raw);
+  if (!name) return {};
+  const command = COMMANDS.find(
+    (entry) => entry.name === name || entry.aliases?.includes(name),
+  );
+  if (!command)
+    return {
+      out: [
+        errorText(`zsh: command not found: ${name}`),
+        text("type `help` to see what's available", "muted"),
+      ],
+    };
+  return command.run(name === "ll" ? ["-l", ...args] : args, ctx);
 }
 
 function quote(path: string): string {
