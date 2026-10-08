@@ -1,29 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { site } from "@/lib/site";
-import { allPosts, blogEmptyNote, formatDate } from "@/lib/posts";
+import { publishMeter, type MeterKind } from "@/lib/telemetry";
+import { formatDate } from "@/lib/date";
+import type { FsFile } from "@/lib/shell/fs";
+import { getShortcut } from "@/lib/shell/commands";
 import { dayOfYear } from "@/lib/shell/calendar";
 
-function Section({
-  cmd,
-  children,
-}: {
-  cmd: string;
-  children: React.ReactNode;
-}) {
+function Section({ cmd, children }: { cmd: string; children: ReactNode }) {
   return (
     <section>
-      <div className="select-none text-muted">
-        <span className="text-green">$</span>{" "}
-        <span
+      <div className="text-muted">
+        <span className="select-none text-green">$</span>{" "}
+        <button
+          type="button"
           data-cmd={cmd}
-          role="button"
-          tabIndex={-1}
-          className="cursor-pointer hover:text-fg"
+          className="command-button hover:text-fg"
         >
           {cmd}
-        </span>
+        </button>
       </div>
       <div className="mt-1">{children}</div>
     </section>
@@ -72,76 +74,156 @@ function ClockNow() {
   );
 }
 
-/** Ambient htop-style bar. Pure ambience: the number is meaningless. */
-const MOOD_COLORS = ["bg-blue", "bg-orange", "bg-purple"];
-const MOOD_DURATIONS = [3.1, 4.3, 5.7];
+type MeterColor = "blue" | "orange" | "purple" | "green";
+
+// Identity stays with the label, not its current position or animated value.
+const MOOD_STYLE: Record<string, { color: MeterColor; duration: number }> = {
+  energy: { color: "blue", duration: 3.1 },
+  caffeine: { color: "orange", duration: 4.3 },
+  vibe: { color: "purple", duration: 5.7 },
+};
 const SKILL_DURATIONS = [2.8, 3.7, 4.9, 6.1];
 
-function AmbientBar({
+/** Playful ambient telemetry, not a proficiency rating. Each meter owns
+ *  its small timer; fill, visible percentage and accessible value agree. */
+function Meter({
+  kind,
   label,
   min,
   max,
   duration,
   color,
 }: {
+  kind: MeterKind;
   label: string;
   min: number;
   max: number;
   duration: number;
-  color: string;
+  color: MeterColor;
 }) {
+  const [percent, setPercent] = useState(() => Math.round(max * 100));
+
+  useLayoutEffect(() => {
+    publishMeter(kind, label, percent);
+  }, [kind, label, percent]);
+
+  useEffect(() => {
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let elapsed = 0;
+    let started = 0;
+
+    function tick() {
+      const phase = (elapsed + performance.now() - started) / (duration * 1000);
+      const value = min + ((max - min) * (1 + Math.cos(phase * Math.PI))) / 2;
+      setPercent(Math.round(value * 100));
+    }
+
+    function start() {
+      if (timer !== null || reducedMotion.matches || document.hidden) return;
+      started = performance.now();
+      timer = setInterval(tick, 120);
+    }
+
+    function stop() {
+      if (timer === null) return;
+      elapsed += performance.now() - started;
+      clearInterval(timer);
+      timer = null;
+    }
+
+    function onMotionChange() {
+      stop();
+      if (reducedMotion.matches) {
+        elapsed = 0;
+        setPercent(Math.round(max * 100));
+      } else {
+        start();
+      }
+    }
+
+    function onVisibilityChange() {
+      if (document.hidden) stop();
+      else start();
+    }
+
+    start();
+    reducedMotion.addEventListener("change", onMotionChange);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      stop();
+      reducedMotion.removeEventListener("change", onMotionChange);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [min, max, duration]);
+
   return (
-    <div>
-      <div className="flex justify-between">
-        <span className="text-muted">{label}</span>
-        <span className="text-muted">{Math.round(max * 100)}%</span>
+    <div
+      role="meter"
+      aria-label={label}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={percent}
+      aria-valuetext={`${percent} percent, ambient animation, not a rating`}
+      title={`${label}: ${percent}%, ambient animation, not a rating`}
+      style={{ "--meter-color": `var(--meter-${color})` } as CSSProperties}
+    >
+      <div className="flex justify-between gap-2 text-muted" aria-hidden="true">
+        <span>{label}</span>
+        <span className="tabular-nums">{percent}%</span>
       </div>
-      <div className="mt-0.5 h-1.5 overflow-hidden rounded-sm bg-line/60">
-        <div
-          className={`dash-bar h-full ${color}`}
-          style={
-            {
-              "--min": min,
-              "--max": max,
-              animationDuration: `${duration}s`,
-            } as React.CSSProperties
-          }
-        />
+      <div className="meter-track mt-0.5" aria-hidden="true">
+        <div className="meter-fill" style={{ width: `${percent}%` }} />
       </div>
     </div>
   );
 }
 
+type Props = {
+  onFold: () => void;
+  /** Supplied by the shell filesystem; no post corpus enters this module. */
+  posts: FsFile[];
+  emptyBlogNote?: string;
+};
+
 /**
  * The right-hand tmux pane: an always-on dashboard. Clock and the
  * sentence of the day sit fixed on top; everything else scrolls.
- * Every section header is a real, clickable command. The pane can
- * be folded away via the × button or the [1:dash] status-bar tab.
+ * Every section header is a native, keyboard-activatable command.
  */
-export default function Dashboard({ onFold }: { onFold: () => void }) {
-  const recent = allPosts().slice(0, 3);
+export default function Dashboard({ onFold, posts, emptyBlogNote }: Props) {
+  const recent = [...posts]
+    .sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""))
+    .slice(0, 3);
 
   return (
     <div className="flex h-full flex-col text-[12px] leading-relaxed">
-      {/* fixed top: digital clock + sentence for the day */}
       <div className="shrink-0 border-b border-line px-4 py-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="select-none text-muted">
-            <span className="text-green">$</span>{" "}
-            <span data-cmd="date" role="button" tabIndex={-1} className="cursor-pointer hover:text-fg">
+          <div className="text-muted">
+            <span className="select-none text-green">$</span>{" "}
+            <button
+              type="button"
+              data-cmd={getShortcut("date").command}
+              className="command-button hover:text-fg"
+            >
               date
-            </span>
+            </button>
             {" && "}
-            <span data-cmd="fortune" role="button" tabIndex={-1} className="cursor-pointer hover:text-fg">
+            <button
+              type="button"
+              data-cmd={getShortcut("fortune").command}
+              className="command-button hover:text-fg"
+            >
               fortune
-            </span>
+            </button>
           </div>
           <button
             type="button"
             onClick={onFold}
             aria-label="fold dashboard pane"
             title="fold pane (reopen via [1:dash] below)"
-            className="-mr-1 -mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted hover:bg-line/60 hover:text-fg"
+            className="-mr-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted hover:bg-line/60 hover:text-fg"
           >
             ×
           </button>
@@ -149,64 +231,66 @@ export default function Dashboard({ onFold }: { onFold: () => void }) {
         <ClockNow />
       </div>
 
-      {/* scrollable sections */}
-      <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
-        <Section cmd="mood">
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-3">
+        <Section cmd={getShortcut("mood").command}>
           <div className="space-y-1.5">
-            {site.mood.map((meter, i) => (
-              <AmbientBar
+            {site.mood.map((meter) => (
+              <Meter
                 key={meter.label}
+                kind="mood"
                 label={meter.label}
                 min={meter.min}
                 max={meter.max}
-                duration={MOOD_DURATIONS[i % MOOD_DURATIONS.length]}
-                color={MOOD_COLORS[i % MOOD_COLORS.length]}
+                duration={MOOD_STYLE[meter.label]?.duration ?? 4}
+                color={MOOD_STYLE[meter.label]?.color ?? "blue"}
               />
             ))}
           </div>
         </Section>
 
-        <Section cmd="cat now.txt">
+        <Section cmd={getShortcut("now").command}>
           <p>{site.now}</p>
         </Section>
 
-        <Section cmd="skills --usage">
+        <Section cmd={getShortcut("skills").command}>
           <div className="space-y-1.5">
             {site.skills.map((skill, i) => (
-              <AmbientBar
+              <Meter
                 key={skill.label}
+                kind="skills"
                 label={skill.label}
                 min={skill.min}
                 max={skill.max}
                 duration={SKILL_DURATIONS[i % SKILL_DURATIONS.length]}
-                color="bg-green"
+                color="green"
               />
             ))}
           </div>
         </Section>
 
-        <Section cmd="ls ~/blog">
+        <Section cmd={getShortcut("blog").command}>
           <ul>
-            {recent.length === 0 && (
-              <li className="text-muted">{blogEmptyNote}</li>
+            {recent.length === 0 && emptyBlogNote && (
+              <li className="text-muted">{emptyBlogNote}</li>
             )}
             {recent.map((post) => (
-              <li key={post.slug} className="truncate">
-                <span
-                  data-cmd={`vim ~/blog/${post.slug}.md`}
-                  role="button"
-                  tabIndex={-1}
-                  className="cursor-pointer text-cyan hover:underline"
+              <li key={post.name}>
+                <button
+                  type="button"
+                  data-cmd={`vim ${JSON.stringify(`~/blog/${post.name}`)}`}
+                  className="command-button text-cyan hover:underline"
                 >
-                  {post.title}
-                </span>
-                <span className="text-muted"> · {formatDate(post.date)}</span>
+                  {post.title ?? post.name}
+                </button>
+                {post.date && (
+                  <span className="text-muted"> · {formatDate(post.date)}</span>
+                )}
               </li>
             ))}
           </ul>
         </Section>
 
-        <Section cmd="cat elsewhere.txt">
+        <Section cmd={getShortcut("elsewhere").command}>
           <ul>
             {site.socials.map((social) => (
               <li key={social.label}>
@@ -227,7 +311,6 @@ export default function Dashboard({ onFold }: { onFold: () => void }) {
             ))}
           </ul>
         </Section>
-
       </div>
     </div>
   );

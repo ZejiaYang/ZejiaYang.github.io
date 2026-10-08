@@ -13,8 +13,7 @@ export const site = {
   },
 
   // Used as the meta description.
-  tagline:
-    "Zejia Yang, CS @ Cambridge. ",
+  tagline: "Zejia Yang, CS @ Cambridge. ",
 
   // ~/about.txt: one string per paragraph.
   bio: [
@@ -80,7 +79,61 @@ export const site = {
   // Dashboard pane: what you're up to right now (one or two lines).
   now: "Hours of manifesting meaninglessness. Occasionally something compiles.",
 
-  // Dashboard pane + `skills` command: skill meters. Bars wander
+  skillInventory: [
+    {
+      label: "Languages",
+      items: [
+        "Python",
+        "C++",
+        "C",
+        "Rust",
+        "SQL",
+        "OCaml",
+        "TypeScript",
+        "JavaScript",
+        "Java",
+        "ARM Assembly",
+        "PHP",
+        "Lean",
+        "MATLAB",
+      ],
+    },
+    {
+      label: "Frameworks & libraries",
+      items: [
+        "PyTorch",
+        "Hugging Face",
+        "NumPy",
+        "Pandas",
+        "Scikit-learn",
+        "React",
+        "Next.js",
+        "Flask",
+        "FastAPI",
+        "Django",
+      ],
+    },
+    {
+      label: "Tools",
+      items: [
+        "Linux",
+        "Git",
+        "Docker",
+        "PostgreSQL",
+        "NoSQL",
+        "Redis",
+        "Apache Spark",
+        "Grafana",
+        "NGINX",
+        "REST",
+        "GraphQL",
+        "OpenTelemetry",
+        "S3",
+      ],
+    },
+  ],
+
+  // Dashboard pane + `skills --usage` command: skill meters. Bars wander
   // between min and max (0–1), battery-style; max is the nominal %.
   skills: [
     { label: "python", min: 0.85, max: 0.95 },

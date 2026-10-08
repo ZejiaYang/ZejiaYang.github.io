@@ -1,24 +1,20 @@
-// The fake filesystem. Rooted at / with a single /home directory
-// containing about.txt and the project/, blog/, random/ folders.
-// Pure data: built from the content files in lib/.
+// Pure definitions and path helpers for the shell's fake filesystem.
+// Content is built on the server in lib/content.ts, never in client code.
 
-import { projects } from "@/lib/projects";
-import { posts, blogEmptyNote } from "@/lib/posts";
-import { likes } from "@/lib/likes";
-import {
-  aboutFile,
-  nowFile,
-  elsewhereFile,
-  projectFile,
-  postFile,
-  likeFile,
-} from "./editor-lines";
 import type { OutLine } from "./lines";
 
 export type FsFile = {
   type: "file";
   name: string;
-  edLines: OutLine[];
+  /** Present on the server or after the client loads this file. */
+  edLines?: OutLine[];
+  /** Root-relative JSON endpoint; the client applies the deployment basePath. */
+  contentUrl?: string;
+  /** Root-relative static page for a project or blog post. */
+  canonicalUrl?: string;
+  title?: string;
+  date?: string;
+  size?: number;
   openHref?: string;
   hidden?: boolean;
 };
@@ -41,73 +37,42 @@ const ALIASES: Record<string, string> = {
   "things-i-like": "random",
 };
 
-export function buildFs(): FsDir {
-  return {
-    type: "dir",
-    name: "",
-    children: [
-      {
-        type: "dir",
-        name: "home",
-        children: [
-          { type: "file", name: "about.txt", edLines: aboutFile() },
-          { type: "file", name: "now.txt", edLines: nowFile() },
-          { type: "file", name: "elsewhere.txt", edLines: elsewhereFile() },
-          {
-            type: "file",
-            name: "cat.txt",
-            edLines: [
-              { spans: [{ text: " /\\_/\\" }] },
-              { spans: [{ text: "( o.o )" }] },
-              { spans: [{ text: " > ^ <" }] },
-            ],
-          },
-          {
-            type: "file",
-            name: ".secret",
-            hidden: true,
-            edLines: [
-              { spans: [{ text: "you found the secret. there is no secret.", tone: "muted" }] },
-            ],
-          },
-          {
-            type: "dir",
-            name: "project",
-            children: projects.map((p) => ({
-              type: "file" as const,
-              name: `${p.slug}.md`,
-              edLines: projectFile(p),
-              openHref: p.href,
-            })),
-          },
-          {
-            type: "dir",
-            name: "blog",
-            emptyNote: blogEmptyNote,
-            children: posts.map((p) => ({
-              type: "file" as const,
-              name: `${p.slug}.md`,
-              edLines: postFile(p),
-              openHref: undefined,
-            })),
-          },
-          {
-            type: "dir",
-            name: "random",
-            children: likes.map((c) => ({
-              type: "file" as const,
-              name: `${c.slug}.md`,
-              edLines: likeFile(c),
-            })),
-          },
-        ],
-      },
-    ],
-  };
+/** Copy the tree without file bodies, preserving URLs and listing metadata. */
+export function stripContent(root: FsDir): FsDir {
+  function strip(node: FsNode, path: string[]): FsNode {
+    if (node.type === "dir") {
+      return {
+        ...node,
+        children: node.children.map((child) =>
+          strip(child, [...path, child.name]),
+        ),
+      };
+    }
+    const { edLines, ...metadata } = node;
+    return {
+      ...metadata,
+      contentUrl:
+        node.contentUrl ??
+        `/content/${path.map(encodeURIComponent).join("/")}.json`,
+      size:
+        node.size ??
+        edLines?.reduce(
+          (total, line) =>
+            total +
+            line.spans.reduce((length, span) => length + span.text.length, 0),
+          0,
+        ),
+    };
+  }
+
+  return strip(root, []) as FsDir;
 }
 
 /** Split a path string into segments, expanding a leading ~. */
-export function splitPath(path: string): { absolute: boolean; segments: string[] } {
+export function splitPath(path: string): {
+  absolute: boolean;
+  segments: string[];
+} {
   let p = path.trim();
   let absolute = false;
   if (p.startsWith("~")) {
@@ -130,7 +95,8 @@ export function resolve(
   path?: string,
 ): { node: FsNode; path: string[] } | null {
   if (!path || path === ".") {
-    return { node: nodeAt(root, cwd)!, path: cwd };
+    const node = nodeAt(root, cwd);
+    return node ? { node, path: cwd } : null;
   }
   const { absolute, segments } = splitPath(path);
   const stack = absolute ? [] : [...cwd];
@@ -147,7 +113,8 @@ export function resolve(
     if (!node) return null;
     stack.push(seg);
   }
-  return { node: nodeAt(root, stack)!, path: stack };
+  const node = nodeAt(root, stack);
+  return node ? { node, path: stack } : null;
 }
 
 export function nodeAt(root: FsDir, path: string[]): FsNode | null {

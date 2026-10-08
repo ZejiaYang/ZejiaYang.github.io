@@ -2,7 +2,8 @@
 // Runs at build time in the server pages and is passed to the
 // client terminal as props, so SSR and hydration match exactly.
 
-import { buildFs, HOME } from "./fs";
+import { buildFs } from "@/lib/content";
+import { HOME, type FsDir } from "./fs";
 import { runCommand, type CmdContext } from "./commands";
 import { blank, text, type Line, type CmdLine, type OutLine } from "./lines";
 
@@ -11,8 +12,11 @@ function echo(cwd: string[], text: string): CmdLine {
 }
 
 /** Run a command against a throwaway context, for static sessions. */
-function staticRun(cwd: string[], raw: string): { lines: Line[]; cwd: string[] } {
-  const root = buildFs();
+function staticRun(
+  root: FsDir,
+  cwd: string[],
+  raw: string,
+): { lines: Line[]; cwd: string[] } {
   const ctx: CmdContext = { cwd, prevCwd: null, root, history: [] };
   const result = runCommand(raw, ctx);
   const lines: Line[] = [echo(cwd, raw), ...(result.out ?? [])];
@@ -33,7 +37,12 @@ function loginLine(now: Date): OutLine {
 const banner: Line = { kind: "block", block: "banner" };
 
 /** The home session: login line, then straight to the banner. */
-export function bootSession(now: Date): { lines: Line[]; cwd: string[] } {
+export function bootSession(
+  now: Date,
+  _root?: FsDir,
+): { lines: Line[]; cwd: string[] } {
+  // The home session prints no files; accept the shared FS for a uniform API.
+  void _root;
   const lines: Line[] = [loginLine(now), blank(), banner];
   return { lines, cwd: [...HOME] };
 }
@@ -42,11 +51,12 @@ export function bootSession(now: Date): { lines: Line[]; cwd: string[] } {
 export function dirSession(
   dir: "project" | "blog" | "random",
   now: Date,
+  root: FsDir = buildFs(),
 ): { lines: Line[]; cwd: string[] } {
   const lines: Line[] = [loginLine(now), blank()];
-  const cd = staticRun(HOME, `cd ${dir}`);
+  const cd = staticRun(root, HOME, `cd ${dir}`);
   lines.push(...cd.lines);
-  const ls = staticRun(cd.cwd, "ls");
+  const ls = staticRun(root, cd.cwd, "ls");
   lines.push(...ls.lines, blank(), banner);
   return { lines, cwd: cd.cwd };
 }

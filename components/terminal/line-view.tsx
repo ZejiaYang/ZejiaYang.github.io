@@ -1,4 +1,5 @@
 import type { OutLine, Span, Tone } from "@/lib/shell/lines";
+import { withBasePath } from "@/lib/urls";
 
 export const toneClass: Record<string, string | undefined> = {
   fg: undefined,
@@ -22,15 +23,23 @@ function SpanView({
   const cls = [
     toneClass[tone ?? "fg"],
     span.bold ? "font-bold" : undefined,
-    span.cmd ? "cursor-pointer hover:underline" : undefined,
-    span.href ? "underline decoration-dotted underline-offset-4 hover:decoration-solid" : undefined,
+    span.cmd ? "command-button hover:underline" : undefined,
+    span.href
+      ? "underline decoration-dotted underline-offset-4 hover:decoration-solid"
+      : undefined,
   ]
     .filter(Boolean)
     .join(" ");
 
   if (span.href) {
     return (
-      <a className={cls} href={span.href} target="_blank" rel="noopener noreferrer">
+      <a
+        className={cls}
+        href={span.cmd ? withBasePath(span.href) : span.href}
+        data-cmd={span.cmd}
+        target={span.cmd ? undefined : "_blank"}
+        rel={span.cmd ? undefined : "noopener noreferrer"}
+      >
         {span.text}
       </a>
     );
@@ -38,9 +47,9 @@ function SpanView({
   if (span.cmd) {
     // Click handling is delegated to the terminal container.
     return (
-      <span className={cls} data-cmd={span.cmd} role="button" tabIndex={-1}>
+      <button type="button" className={cls} data-cmd={span.cmd}>
         {span.text}
-      </span>
+      </button>
     );
   }
   return <span className={cls}>{span.text}</span>;
@@ -52,17 +61,23 @@ function SpanView({
 export default function OutLineView({
   line,
   toneMap,
+  preserveWhitespace = false,
 }: {
   line: OutLine;
   toneMap?: Partial<Record<Tone, Tone>>;
+  /** Code rows keep their source spacing inside a horizontal scroll region. */
+  preserveWhitespace?: boolean;
 }) {
+  const className = `${preserveWhitespace ? "whitespace-pre" : "whitespace-pre-wrap break-words"} ${line.tight ? "leading-[1.25]" : ""}`;
   if (line.spans.every((s) => !s.text)) {
-    return <div aria-hidden="true">&nbsp;</div>;
+    return (
+      <div aria-hidden="true" className={className}>
+        &nbsp;
+      </div>
+    );
   }
   return (
-    <div
-      className={`whitespace-pre-wrap break-words ${line.tight ? "leading-[1.25]" : ""}`}
-    >
+    <div className={className}>
       {line.spans.map((span, i) => (
         <SpanView key={i} span={span} toneMap={toneMap} />
       ))}

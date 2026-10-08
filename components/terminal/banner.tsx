@@ -1,14 +1,7 @@
 import { site } from "@/lib/site";
 import { GHOST, type ArtFrame } from "@/lib/shell/art";
+import { getQuickCommands } from "@/lib/shell/commands";
 import { toneClass } from "./line-view";
-
-const COMMANDS = [
-  "ls ./project",
-  "ls ./blog",
-  "ls ./random",
-  "vim about.txt",
-  "help",
-];
 
 function GhostFrame({ frame }: { frame: ArtFrame }) {
   return (
@@ -61,16 +54,21 @@ export default function Banner() {
           <div className="select-none text-muted" aria-hidden="true">
             ─────────────
           </div>
-          <ul className="mt-1">
-            {COMMANDS.map((cmd) => (
-              <li key={cmd}>
-                <span
-                  data-cmd={cmd}
-                  role="button"
-                  tabIndex={-1}
-                  className="cursor-pointer text-cyan hover:underline"
+          <ul className="mt-1 space-y-0.5">
+            {getQuickCommands().map(({ id, command, description }) => (
+              <li
+                key={id}
+                className="grid grid-cols-[max-content_minmax(0,1fr)] items-baseline gap-x-3"
+              >
+                <button
+                  type="button"
+                  data-cmd={command}
+                  className="command-button whitespace-nowrap text-cyan hover:underline"
                 >
-                  {cmd}
+                  {command}
+                </button>
+                <span className="min-w-0 max-w-[28ch] text-muted">
+                  # {description}
                 </span>
               </li>
             ))}

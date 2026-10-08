@@ -37,7 +37,10 @@ function blocksToLines(blocks: PostBlock[]): OutLine[] {
     lines.push(blank());
   }
   // Trim trailing blank line.
-  while (lines.length > 0 && lines[lines.length - 1].spans.every((s) => !s.text)) {
+  while (
+    lines.length > 0 &&
+    lines[lines.length - 1].spans.every((s) => !s.text)
+  ) {
     lines.pop();
   }
   return lines;
@@ -62,11 +65,7 @@ export function aboutFile(): OutLine[] {
         { text: `  (${job.when})`, tone: "muted" },
       ),
       out({ text: "  " }, { text: job.what }),
-      out(
-        { text: "  " },
-        { text: "How: ", tone: "muted" },
-        { text: job.how },
-      ),
+      out({ text: "  " }, { text: "How: ", tone: "muted" }, { text: job.how }),
     );
   }
 
@@ -113,23 +112,25 @@ export function elsewhereFile(): OutLine[] {
 }
 
 export function projectFile(project: Project): OutLine[] {
-  if (project.readme) return blocksToLines(project.readme);
-  const lines = header(project.title);
-  lines.push(text(project.description), blank());
-  lines.push(out({ text: "## stack", tone: "blue", bold: true }));
-  for (const tag of project.tags) {
-    lines.push(out({ text: "- ", tone: "orange" }, { text: tag }));
+  const lines = project.readme
+    ? blocksToLines(project.readme)
+    : header(project.title);
+  if (!project.readme) {
+    lines.push(text(project.description), blank());
+    lines.push(out({ text: "## stack", tone: "blue", bold: true }));
+    for (const tag of project.tags) {
+      lines.push(out({ text: "- ", tone: "orange" }, { text: tag }));
+    }
   }
-  if (project.href) {
-    lines.push(
-      blank(),
-      out({ text: "## links", tone: "blue", bold: true }),
-    );
+  if (project.href?.length) {
+    lines.push(blank(), out({ text: "## links", tone: "blue", bold: true }));
     for (const link of project.href) {
-      lines.push(out(
-        { text: "- ", tone: "orange" },
-        { text: link, tone: "cyan", href: link },
-      ));
+      lines.push(
+        out(
+          { text: "- ", tone: "orange" },
+          { text: link, tone: "cyan", href: link },
+        ),
+      );
     }
   }
   return lines;
@@ -137,6 +138,41 @@ export function projectFile(project: Project): OutLine[] {
 
 export function postFile(post: Post): OutLine[] {
   return blocksToLines(post.blocks);
+}
+
+/** Preserve Markdown source, including fence lines, without interpreting HTML. */
+export function markdownFile(source: string): OutLine[] {
+  let fence: { marker: string; length: number } | undefined;
+  return source
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => {
+      const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (fence) {
+        if (
+          marker &&
+          marker[1][0] === fence.marker &&
+          marker[1].length >= fence.length &&
+          !marker[2].trim()
+        ) {
+          fence = undefined;
+          return text(line, "muted");
+        }
+        return text(line, "green");
+      }
+      if (marker) {
+        fence = { marker: marker[1][0], length: marker[1].length };
+        return text(line, "muted");
+      }
+      if (/^ {0,3}#{1,6}\s/.test(line)) {
+        return out({ text: line, tone: "blue", bold: true });
+      }
+      if (/^\s*>/.test(line)) return text(line, "muted");
+      const list = /^(\s*(?:[-+*]|\d+[.)])\s+)(.*)$/.exec(line);
+      if (list)
+        return out({ text: list[1], tone: "orange" }, { text: list[2] });
+      return text(line);
+    });
 }
 
 export function likeFile(category: LikeCategory): OutLine[] {

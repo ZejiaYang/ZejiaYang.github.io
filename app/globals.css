@@ -9,15 +9,24 @@
   --mantle: #d5d6db;
   --editor: #edeef4;
   --fg: #343b58;
-  --muted: #848cb5;
+  /* Text tokens clear 4.5:1 even on the darker mantle surface. */
+  --muted: #4f5a76;
   --line: #c4c8da;
-  --blue: #2e7de9;
-  --cyan: #007197;
-  --green: #587539;
-  --orange: #b15c00;
-  --red: #f52a65;
-  --purple: #9854f1;
+  --blue: #215bad;
+  --cyan: #00617f;
+  --green: #48632e;
+  --orange: #8c4900;
+  --red: #ae1d4c;
+  --purple: #713eb0;
   --selection: #b7c1e3;
+  --code-bg: #dfe1eb;
+  --focus: var(--cyan);
+  /* Mood mark palette, fixed blue / orange / purple order. */
+  --meter-blue: #215bad;
+  --meter-orange: #8c4900;
+  --meter-purple: #713eb0;
+  --meter-green: var(--green);
+  color-scheme: light;
 }
 
 /* Tokyo Night (dark theme, the default look) */
@@ -26,7 +35,7 @@
   --mantle: #16161e;
   --editor: #1f2335;
   --fg: #c0caf5;
-  --muted: #565f89;
+  --muted: #929dc1;
   --line: #292e42;
   --blue: #7aa2f7;
   --cyan: #7dcfff;
@@ -35,6 +44,12 @@
   --red: #f7768e;
   --purple: #bb9af7;
   --selection: #283457;
+  --code-bg: #181d2c;
+  /* Marks use calmer steps of the same Tokyo Night hues as the text. */
+  --meter-blue: #597ecd;
+  --meter-orange: #c27649;
+  --meter-purple: #916cbd;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -69,6 +84,67 @@ body {
 
 ::selection {
   background: var(--selection);
+}
+
+/* Native commands keep the terminal's inline text and padded whitespace. */
+@layer components {
+  .command-button {
+    display: inline;
+    margin: 0;
+    border: 0;
+    padding: 0;
+    background: none;
+    font: inherit;
+    text-align: inherit;
+    vertical-align: baseline;
+    white-space: inherit;
+    cursor: pointer;
+  }
+}
+
+:where(a[href], button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* Keep focus visible inside the clipped, scrollable reading regions. */
+.editor-reading:focus-visible,
+.editor-code-scroll:focus-visible {
+  outline-offset: -3px;
+}
+
+.editor-document {
+  width: 100%;
+  max-width: calc(75ch + var(--gutter-width, 4ch));
+}
+
+.editor-line-text {
+  min-width: 0;
+  flex: 1;
+  max-width: 75ch;
+}
+
+.editor-gutter {
+  width: var(--gutter-width, 4ch);
+  flex-shrink: 0;
+  padding-right: 1.5ch;
+  text-align: right;
+  user-select: none;
+  color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+
+.editor-code-scroll {
+  min-width: 0;
+  flex: 1;
+  overflow-x: auto;
+  background: var(--code-bg);
+  border-radius: 2px;
+}
+
+.editor-code-content {
+  width: max-content;
+  min-width: 100%;
+  padding-inline: 0.75ch;
 }
 
 /* blinking block cursor */
@@ -152,28 +228,46 @@ body {
   }
 }
 
-/* dashboard ambient bars */
-.dash-bar {
-  transform: scaleX(var(--max, 0.8));
-  transform-origin: left;
-  animation: dash-bar 4s ease-in-out infinite alternate;
+/* Meter values and fills are driven by the same modest-rate JS clock. */
+.meter-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--meter-color) 18%, var(--mantle));
 }
-@keyframes dash-bar {
-  from {
-    transform: scaleX(var(--min, 0.3));
-  }
-  to {
-    transform: scaleX(var(--max, 0.8));
-  }
+
+.meter-fill {
+  height: 100%;
+  border-radius: 0 4px 4px 0;
+  background: var(--meter-color);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  body {
+    transition: none;
+  }
+
   .cursor-blink,
   .ghost-float,
   .ghost-half,
-  .ghost-closed,
-  .dash-bar {
+  .ghost-closed {
     animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  :where(a[href], button, input, select, textarea, [tabindex]):focus-visible {
+    outline-color: Highlight;
+  }
+
+  .meter-track {
+    background: Canvas;
+    outline: 1px solid CanvasText;
+  }
+
+  .meter-fill {
+    background: Highlight;
+    forced-color-adjust: none;
   }
 }
 

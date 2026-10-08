@@ -4,16 +4,27 @@
 import { out, text, type OutLine, type Span } from "./lines";
 
 const MONTHS = [
-  "January", "February", "March", "April", "May", "June",
-  "July", "August", "September", "October", "November", "December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 const WEEK_HEADER = "Su Mo Tu We Th Fr Sa";
 const CAL_W = WEEK_HEADER.length; // 20
 
 export function dayOfYear(d: Date): number {
-  const start = new Date(d.getFullYear(), 0, 0);
-  return Math.floor((d.getTime() - start.getTime()) / 86_400_000);
+  const today = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  const start = Date.UTC(d.getFullYear(), 0, 0);
+  return Math.floor((today - start) / 86_400_000);
 }
 
 /** `cal`-style month grid with today highlighted. */
