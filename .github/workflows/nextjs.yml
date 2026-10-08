@@ -24,6 +24,8 @@ jobs:
         with:
           node-version: "22"
           cache: npm
+      - name: Pin npm
+        run: npm install --global npm@10.9.9
       - name: Setup Pages
         id: pages
         if: github.event_name != 'pull_request'

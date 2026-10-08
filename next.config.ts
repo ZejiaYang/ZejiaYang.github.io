@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
   images: { unoptimized: true },
   basePath,
   env: { NEXT_PUBLIC_BASE_PATH: basePath },
+  // Imported CSS can remain stale in the dev cache after dependency reinstalls.
+  experimental: { turbopackFileSystemCacheForDev: false },
 };
 
 export default nextConfig;

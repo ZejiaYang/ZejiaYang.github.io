@@ -2,6 +2,11 @@
   "name": "personal-site",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@10.9.9",
+  "engines": {
+    "node": "^22.13.0",
+    "npm": "^10.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
